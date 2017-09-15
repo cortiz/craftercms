@@ -66,7 +66,7 @@ ext {
 
     /** Unzip Properties **/
     tomcatVersion=project.hasProperty("tomcat.version")? project.property("tomcat.version") : "8.5.20"
-    solrVersion=project.hasProperty("solr.version")? project.property("solr.version") : "6.5.1"
+    solrVersion=project.hasProperty("solr.version")? project.property("solr.version") : "6.4.1"
     downloadDir=project.hasProperty("downloadDir")? project.property("downloadDir") : "./downloads/"
     /** Environment Building properties **/
     authEnv=project.hasProperty("authoring.root")? project.property("authoring.root") : "./crafter-authoring/"
