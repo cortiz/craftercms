@@ -1,4 +1,13 @@
 #!/usr/bin/env bash
+
+OSARCH=$(getconf LONG_BIT)
+if [[ $OSARCH -eq "32" ]]; then
+  echo -e "\033[38;5;196m"
+  echo "CrafterCMS is not supported in a 32bit os"
+  echo -e "\033[0m"
+  read -r
+fi
+
 export CRAFTER_HOME=${CRAFTER_HOME:=$( cd "$( dirname "${BASH_SOURCE[0]}" )" && pwd )}
 export CRAFTER_ROOT=${CRAFTER_ROOT:=$( cd "$CRAFTER_HOME/.." && pwd )}
 export DEPLOYER_HOME=${DEPLOYER_HOME:=$CRAFTER_HOME/crafter-deployer}
