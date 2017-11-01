@@ -235,9 +235,8 @@ task("deliveryEnvironment"){
 
         copy{
             from "./resources/tomcat-config/crafter/catalina.policy"
-            into "${authEnv}/bin/apache-tomcat/conf/"
+            into "${deliveryEnv}/bin/apache-tomcat/conf/"
         }
-
 
         copy{
             from "./resources/tomcat-config-delivery/"
