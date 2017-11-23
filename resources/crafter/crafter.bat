@@ -55,6 +55,14 @@ goto :init
 
 :initWithOutExit
 @rem Windows does not support Or in the If soo...
+netstat -o -n -a | findstr  "0.0.0.0:%MARIADB_PORT%"
+IF %ERRORLEVEL% equ 0 (
+ echo Crafter CMS Database Port: %MARIADB_PORT% is in use.
+ echo This might be because of a prior unsuccessful or incomplete shut down.
+ echo "Please terminate that process before attempting to start Crafter CMS."
+ pause
+ exit /b 2
+)
 
 IF EXIST %PROFILE_WAR_PATH% set start_mongo=true
 IF /i "%FORCE_MONGO%"=="forceMongo" set start_mongo=true
