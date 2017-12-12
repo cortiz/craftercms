@@ -1,0 +1,986 @@
+import org.apache.commons.lang3.SystemUtils
+import org.apache.commons.text.StringEscapeUtils
+
+import java.nio.charset.Charset
+import java.nio.file.Files
+import java.nio.file.Paths
+import java.nio.file.StandardOpenOption
+import java.util.UUID
+
+buildscript {
+    repositories {
+        mavenCentral()
+    }
+    dependencies {
+        classpath group: 'org.apache.commons', name: 'commons-text', version: '1.1'
+        classpath group: 'org.apache.commons', name: 'commons-lang3', version: '3.6'
+        classpath 'org.ajoberstar:grgit:1.1.0'
+
+    }
+}
+
+plugins {
+    id "de.undercouch.download" version "3.1.2"
+}
+
+project.version ="3.0.3-SNAPSHOT"
+
+def isWin = System.getProperty('os.name').toLowerCase().contains('windows')
+def isOSX = System.getProperty('os.name').toLowerCase().contains('mac')
+def isNix = (System.getProperty('os.name').toLowerCase().contains('nix') || System.getProperty('os.name').toLowerCase().contains('aix') || System.getProperty('os.name').toLowerCase().contains('nux'))
+
+def commandLinePrefix = []
+def startUpFile = "./startup.sh"
+def shutDownFile = "./shutdown.sh"
+if (isWin) {
+    startUpFile = "startup.bat"
+    shutDownFile = "shutdown.bat"
+    commandLinePrefix = ["cmd", "/c"]
+}
+
+def getModule() {
+    if (project.hasProperty("moduleName")) {
+        def moduleName = project.property("moduleName")
+        moduleName = moduleName.trim().toLowerCase()
+        return moduleName.trim().isEmpty() ? "all" : moduleName
+    } else {
+        return "all"
+    }
+}
+
+def getEnv() {
+    if (project.hasProperty("env")) {
+        def environmentName = project.property("env")
+        environmentName = environmentName.trim().toLowerCase()
+        return environmentName.trim().isEmpty() ? "all" : environmentName
+    } else {
+        return "all"
+    }
+}
+
+def isAllEnvs() {
+    return getEnv().equalsIgnoreCase("all")
+}
+
+ext {
+
+    /** Unzip Properties **/
+    tomcatVersion = project.hasProperty("tomcat.version") ? project.property("tomcat.version") : "8.5.24"
+    solrVersion = project.hasProperty("solr.version") ? project.property("solr.version") : "6.4.1"
+    downloadDir = project.hasProperty("downloadDir") ? project.property("downloadDir") : "./downloads/"
+    /** Environment Building properties **/
+    authEnv = project.hasProperty("authoring.root") ? project.property("authoring.root") : "./crafter-authoring/"
+    deliveryEnv = project.hasProperty("delivery.root") ? project.property("delivery.root") : "./crafter-delivery/"
+    includeProfile = project.hasProperty("crafter.profile") ? project.property("crafter.profile") : false
+    includeSocial = project.hasProperty("crafter.social") ? project.property("crafter.social") : false
+
+    /** Social Need Profile **/
+    if (includeSocial) {
+        includeProfile = true
+    }
+
+
+    if (project.hasProperty("debug")) {
+        startUpFile = "./debug.sh"
+        if (isWin) {
+            startUpFile = "debug.bat"
+        }
+    }
+
+    //Authoring
+    authTomcatPort = project.hasProperty("authoring.tomcat.http.port") ? project.property("authoring.tomcat.http.port") : 8080
+    authTomcatShutdownPort = project.hasProperty("authoring.tomcat.shutdown.port") ? project.property("authoring.tomcat.shutdown.port") : 8005
+    authTomcatAJPPort = project.hasProperty("authoring.tomcat.ajp.port") ? project.property("authoring.tomcat.ajp.port") : 8009
+    authTomcatSSLPort = project.hasProperty("authoring.tomcat.https.port") ? project.property("authoring.tomcat.https.port") : 8443
+    authTomcatDebug = project.hasProperty("authoring.tomcat.debug.port") ? project.property("authoring.tomcat.debug.port") : 8000
+    authMongoDBPort = project.hasProperty("authoring.mongo.port") ? project.property("authoring.mongo.port") : 27020
+    authSolrPort = project.hasProperty("authoring.solr.port") ? project.property("authoring.solr.port") : 8694
+    authSolrDebugPort = project.hasProperty("authoring.solr.debug.port") ? project.property("authoring.solr.debug.port") : 5005
+    authSMTPPort = project.hasProperty("authoring.studio.smtp.port") ? project.property("authoring.studio.smtp.port") : 25
+    authMariaDbPort = project.hasProperty("authoring.mariadb.port") ? project.property("authoring.mariadb.port") : 33306
+
+    authDeployerPort = project.hasProperty("authoring.deployer.port") ? project.property("authoring.deployer.port") : 9191
+    authDeployerDebugPort = project.hasProperty("authoring.deployer.debug.port") ? project.property("authoring.deployer.debug.port") : 5000
+    authDeploymentDir = project.hasProperty("authoring.deployment.dir") ? project.property("authoring.deployment.dir") : "data/repos/sites"
+
+    // Delivery
+    deliverySolrPort = project.hasProperty("delivery.solr.port") ? project.property("delivery.solr.port") : 8695
+    deliverySolrDebugPort = project.hasProperty("delivery.solr.debug.port") ? project.property("delivery.solr.debug.port") : 5006
+
+    deliveryDeployerPort = project.hasProperty("delivery.deployer.port") ? project.property("delivery.deployer.port") : 9192
+    deliveryDeployerDebugPort = project.hasProperty("delivery.deployer.debug.port") ? project.property("delivery.deployer.debug.port") : 5001
+    deliveryDeploymentDir = project.hasProperty("delivery.deployment.dir") ? project.property("delivery.deployment.dir") : "data/repos/sites"
+
+    deliveryTomcatPort = project.hasProperty("delivery.tomcat.http.port") ? project.property("delivery.tomcat.http.port") : 9080
+    deliveryTomcatShutdownPort = project.hasProperty("delivery.tomcat.shutdown.port") ? project.property("delivery.tomcat.shutdown.port") : 9005
+    deliveryTomcatAJPPort = project.hasProperty("delivery.tomcat.ajp.port") ? project.property("delivery.tomcat.ajp.port") : 9009
+    deliveryTomcatSSLPort = project.hasProperty("delivery.tomcat.https.port") ? project.property("delivery.tomcat.https.port") : 9443
+    deliveryTomcatDebugPort = project.hasProperty("delivery.tomcat.debug.port") ? project.property("delivery.tomcat.debug.port") : 9000
+    deliveryMongoDBPort = project.hasProperty("delivery.mongodb.port") ? project.property("delivery.mongodb.port") : 28020
+
+    /** Git properties **/
+    gitURLTemplate = project.hasProperty("crafter.git.url") ? project.property("crafter.git.url") : "https://github.com/craftercms/"
+    gitSourceBranch = project.hasProperty("crafter.git.branch") ? project.property("crafter.git.branch") : "develop"
+    gitRepo = project.hasProperty("crafter.git.remote") ? project.property("crafter.git.remote") : "origin"
+    shallowClone = project.hasProperty("crafter.git.shallowClone") ? project.property("crafter.git.shallowClone") : false
+    studioUIFromRepo = project.hasProperty("crafter.ui.repo") ? project.property("crafter.ui.repo") : false
+    forceDeploy = project.hasProperty("forceDeploy") ? project.property("forceDeploy") : false
+    keepBin = project.hasProperty("keepBin") ? project.property("keepBin") : false
+
+    testingPlatform = project.hasProperty("crafter.testing.platform") ? project.property("crafter.testing.platform") : System.properties['os.name'].toString().toLowerCase().replaceAll(" ", "-")
+    chromeDriverVersion = project.hasProperty("crafter.testing.chrome") ? project.property("crafter.testing.chrome") : 2.33
+    browserToTest = project.hasProperty("crafter.testing.browser") ? project.property("crafter.testing.browser") : "chrome"
+    testArtifacts = project.hasProperty("crafter.unittest") ? project.property("crafter.unittest") : false
+
+    testingSuites = project.hasProperty("crafter.testing.suites") ? project.property("crafter.testing.suites") :
+            "src/test/resources/testng.xml,src/test/resources/testngcomplexscenarios.xml,src/test/resources/testngAPI.xml" +
+                    ",src/test/resources/testngSanityTest.xml"
+
+    startMongodb = project.hasProperty("startMongodb") ? project.property("startMongodb") : false // Does not really.
+    silentBuild = project.hasProperty("crafter.build.silent")  ? project.property("crafter.build.silent") : false
+
+    /** Cloneable Artifacts **/
+    VALID_MODULES = ["commons", "core", "search", "profile", "engine", "deployer", "studio", "social", "studio-ui", "test-suite"]
+    /** Deployable Artifacts **/
+    VALID_DEPLOYABLE_MODULES = [
+            "search"  : "./src/search/crafter-search-server/target/crafter-search.war",
+            "profile" : "./src/profile/server/target/crafter-profile.war",
+            "engine"  : "./src/engine/target/ROOT.war",
+            "deployer": "./src/deployer/target/crafter-deployer.jar",
+            "studio"  : "./src/studio/target/studio.war",
+            "social"  : "./src/social/server/target/crafter-social.war"]
+    WINDOWS_EDGE_DRIVER_URL = [
+            "15063": "https://download.microsoft.com/download/3/4/2/342316D7-EBE0-4F10-ABA2-AE8E0CDF36DD/MicrosoftWebDriver.exe",
+            "14393": "https://download.microsoft.com/download/3/2/D/32D3E464-F2EF-490F-841B-05D53C848D15/MicrosoftWebDriver.exe",
+            "10586": "https://download.microsoft.com/download/C/0/7/C07EBF21-5305-4EC8-83B1-A6FCC8F93F45/MicrosoftWebDriver.msi",
+            "10240": "https://download.microsoft.com/download/8/D/0/8D0D08CF-790D-4586-B726-C6469A9ED49C/MicrosoftWebDriver.msi"
+    ]
+    git = org.ajoberstar.grgit.Grgit.open(dir: ".")
+    gitRevisionId = git.head().id.substring(0,6)
+}
+
+apply from: "downloads.gradle"
+apply from: "environments.gradle"
+
+
+def envs=[]
+def deliveryDeps=[]
+def envDepends = ["downloadTomcat","downloadSolr"]
+def buildDeps = []
+
+
+/** Some blackmagic here and there creates module_build tasks **/
+VALID_MODULES.each { module ->
+    // Creates the Clean Task
+    if (!tasks.findByPath("${module}_clean")) {
+        task "${module}_clean" doLast({
+            def array = commandLinePrefix + ["mvn", "clean"]
+            executeProcess(array, "./src/${module}".toString())
+        })
+    } else {
+        logger.debug("Task ${module}_build already exists")
+    }
+}
+VALID_MODULES.each { module ->
+    // Creates the Build Tasks
+    if( !tasks.findByPath("${module}_build")) {
+        task "${module}_build" doLast({
+            def actualCommandLinePost = [];
+            if (!testArtifacts) {
+                actualCommandLinePost.add("-Dmaven.test.skip=true")
+            }
+            if (module.equalsIgnoreCase("search")) {
+                actualCommandLinePost.add("-pl")
+                actualCommandLinePost.add("!crafter-search-itest")
+            } else if (module.equalsIgnoreCase("profile")) {
+                actualCommandLinePost.add("-pl")
+                if (!includeProfile) {
+                    actualCommandLinePost.add("!admin-console,!integration-tests,!server")
+                } else {
+                    actualCommandLinePost.add("!integration-tests")
+                }
+            }
+            if (module.equalsIgnoreCase("studio") && !studioUIFromRepo) {
+                actualCommandLinePost.add("-Dstudio.ui.path=../studio-ui/".toString())
+                actualCommandLinePost.add("-Dexec.skip=true")
+            }
+            def array = commandLinePrefix + ["mvn", "install"] + actualCommandLinePost
+            executeProcess(array, "./src/${module}".toString())
+        })
+        buildDeps.add("${module}_build")
+    } else {
+        logger.debug("Task ${module}_build already exists")
+    }
+}
+
+
+if(getEnv().equalsIgnoreCase("all")){
+    envs=["authoring","delivery"]
+    envDepends = ["authoringEnvironment","deliveryEnvironment"]
+}else{
+    envs= [getEnv()]
+    envDepends = ["${getEnv()}Environment"]
+}
+
+envs.each { env ->
+// Creates the deploy tasks
+    VALID_DEPLOYABLE_MODULES.keySet().each { module ->
+        if (!(env.equalsIgnoreCase("delivery") && module.equalsIgnoreCase("studio"))) {
+            if (!tasks.findByName("${module}_${env}_deploy")) {
+                task "${module}_${env}_deploy" doLast({
+                    def deployable = file(VALID_DEPLOYABLE_MODULES[module])
+                    deployBinary(deployable, env)
+                    if (module.equalsIgnoreCase("profile")) {
+                        deployBinary(file("./src/profile/admin-console/target/crafter-profile-admin.war"), env)
+                    } else if (module.equalsIgnoreCase("social")) {
+                        deployBinary(file("./src/social/admin/target/crafter-social-admin.war"), env)
+                    }
+                })
+                 deliveryDeps.add("${module}_${env}_deploy")
+            } else {
+                logger.debug("Task ${module}_deploy already exists")
+            }
+        }
+    }
+}
+
+
+/* Cleanup non buildable modules */
+buildDeps.removeAll(['studio-ui_build','test-suite_build'] as Object[])
+if(!includeSocial){
+    buildDeps.removeAll(['social_build'] as Object[])
+    deliveryDeps.removeIf({
+        it.contains("social")
+    })
+}
+
+if(!includeProfile){
+    deliveryDeps.removeIf({
+        it.contains("profile")
+    })
+}
+
+println buildDeps
+
+task clean (dependsOn:buildDeps){
+    //Dummy task Builds used as dependency of other tasks
+}
+
+task build (dependsOn:[clean]+buildDeps){
+    //Dummy task Builds used as dependency of other tasks
+}
+
+
+
+task preDeploy {
+  doLast {
+      if(getEnv().equalsIgnoreCase("all")) {
+          checkOrCreateCheck("authoring")
+          checkOrCreateCheck("delivery")
+      }else{
+          checkOrCreateCheck(getEnv())
+      }
+  }
+}
+
+def checkOrCreateCheck(path){
+    def ddir = file(path)
+    if (!ddir.exists() || forceDeploy) {
+        ddir.mkdir()
+        def deployerDir = file("${path}/bin/crafter-deployer")
+        deployerDir.mkdir()
+    }
+}
+
+task deploy (dependsOn:["preDeploy","downloadTomcat","downloadSolr"]+envDepends+deliveryDeps)
+//
+//task("utils") {
+//    description "builds the utils project and copies the utils jar file to the environment"
+//
+//    doLast {
+//        buildModule(commandLinePrefix, "utils", "./")
+//        copy {
+//            from "./utils/target/craftercms-utils.jar"
+//            into "${authEnv}/bin"
+//        }
+//        copy {
+//            from "./utils/target/craftercms-utils.jar"
+//            into "${deliveryEnv}/bin"
+//        }
+//    }
+//}
+//
+//task("upgrade") {
+//    description "Upgrades the installed tomcat version, solr scripts, etc. without deleting your data then builds and deploys"
+//    def envs = []
+//    doFirst {
+//
+//        switch (env) {
+//            case "all":
+//                envs.addAll([new File("${authEnv}"), new File("${deliveryEnv}")])
+//                break
+//            case "authoring":
+//                envs.add(new File("${authEnv}"))
+//                break
+//            case "delivery":
+//                envs.add(new File("${deliveryEnv}"))
+//                break
+//            default:
+//                throw new InvalidUserDataException("'${env}' is not a valid environment, please use 'authoring' or 'delivery'.")
+//        }
+//    }
+//
+//    doLast {
+//        envs.each { envFolder ->
+//            if (envFolder.exists()) {
+//                envFolder.eachFile { dir ->
+//                    if (!dir.getName().equalsIgnoreCase("data")) {
+//                        if (!dir.isFile()) {
+//                            dir.deleteDir()
+//                        } else {
+//                            dir.delete()
+//                        }
+//                    }
+//                }
+//            }
+//        }
+//        update.execute();
+//        forceDeploy = true
+//        build.execute()
+//        deploy.execute()
+//    }
+//}
+//
+//task("init") {
+//    description "Clones Crafter CMS stack"
+//
+//    doFirst {
+//        def module = getModule();
+//    }
+//    doLast {
+//        if (module.equals("all")) {
+//            VALID_MODULES.each {
+//                cloneModule(commandLinePrefix, it).execute()
+//            }
+//        } else if (VALID_MODULES.contains(module)) {
+//            cloneModule(commandLinePrefix, module).execute()
+//        } else {
+//            throw new InvalidUserDataException("${module} is not a valid module, please one of ${VALID_MODULES}")
+//        }
+//    }
+//
+//}
+//
+//task("update") {
+//    description "Update the various modules of Crafter CMS"
+//    doFirst {
+//        def module = getModule();
+//    }
+//
+//    doLast {
+//        if (module.equals("all")) {
+//            VALID_MODULES.each {
+//                updateModule(commandLinePrefix, it).execute()
+//            }
+//        } else if (VALID_MODULES.contains(module)) {
+//            updateModule(commandLinePrefix, module).execute()
+//        } else {
+//            throw new InvalidUserDataException("${module} is not a valid module, please use one of ${VALID_MODULES}")
+//        }
+//    }
+//}
+//
+//task("selfupdate") {
+//    description "Updates the Crafter CMS project"
+//    doLast {
+//        def arry = commandLinePrefix + ["git", "pull", gitRepo, gitSourceBranch]
+//        executeProcess(arry, ".")
+//    }
+//}
+//
+//task("start") {
+//    description "Start Crafter CMS"
+//
+//    doLast {
+//        def extraStartupParams = []
+//        if (startMongodb) {
+//            extraStartupParams.add("forceMongo")
+//        }
+//        def env = getEnv()
+//        logger.lifecycle "Running for the first time might take longer while fetching OS dependent requirements."
+//        switch (env) {
+//            case "all":
+//                if (!file(authEnv).exists() || !file(deliveryEnv).exists()) {
+//                    throw new InvalidUserDataException("Neither enviroment ('authoring'/'delivery') are deployed. Please run deploy before 'start'.")
+//                }
+//                startAuth(commandLinePrefix, startUpFile, extraStartupParams).execute()
+//                startDelivery(commandLinePrefix, startUpFile, extraStartupParams).execute()
+//                break
+//            case "authoring":
+//                if (!file(authEnv).exists()) {
+//                    throw new InvalidUserDataException("The 'authoring' enviroment is not deployed. Please run 'deploy -Penv=authoring' before 'start'.")
+//                }
+//                startAuth(commandLinePrefix, startUpFile, extraStartupParams).execute()
+//                break
+//            case "delivery":
+//                if (!file(deliveryEnv).exists()) {
+//                    throw new InvalidUserDataException("The 'delivery' enviroment is not deployed. Please run 'deploy -Penv=delivery' before 'start'.")
+//                }
+//                startDelivery(commandLinePrefix, startUpFile, extraStartupParams).execute()
+//                break
+//            default:
+//                throw new InvalidUserDataException("'${env}' is not a valid environment, please use 'authoring' or 'delivery'.")
+//        }
+//    }
+//}
+//
+//
+//task("status") {
+//    description "Start Crafter CMS"
+//    if(!isWin) {
+//        doLast {
+//            def env = getEnv()
+//            switch (env) {
+//                case "all":
+//                    if (!file(authEnv).exists() || !file(deliveryEnv).exists()) {
+//                        throw new InvalidUserDataException("Neither enviroment ('authoring'/'delivery') are deployed. Please run deploy before 'status'.")
+//                    }
+//                    executeProcess(commandLinePrefix + ["./crafter.sh", "status"] , "$authEnv/bin", true)
+//                    executeProcess(commandLinePrefix + ["./crafter.sh", "status"] , "$deliveryEnv/bin", true)
+//                    break
+//                case "authoring":
+//                    if (!file(authEnv).exists()) {
+//                        throw new InvalidUserDataException("The 'authoring' enviroment is not deployed. Please run 'deploy -Penv=authoring' before 'start'.")
+//                    }
+//                    executeProcess(commandLinePrefix + ["./crafter.sh", "status"] , "$authEnv/bin", true)
+//                    break
+//                case "delivery":
+//                    if (!file(deliveryEnv).exists()) {
+//                        throw new InvalidUserDataException("The 'delivery' enviroment is not deployed. Please run 'deploy -Penv=delivery' before 'start'.")
+//                    }
+//                    executeProcess(commandLinePrefix + ["./crafter.sh", "status"] , "$deliveryEnv/bin", true)
+//                    break
+//                default:
+//                    throw new InvalidUserDataException("'${env}' is not a valid environment, please use 'authoring' or 'delivery'.")
+//            }
+//        }
+//    }else{
+//        logger.lifecycle("The Status call is not yet avaiable on Windows")
+//    }
+//}
+//
+//
+//task("stop") {
+//    description "Stop Crafter CMS"
+//
+//    doLast {
+//        def extraStartupParams = []
+//        if (startMongodb) {
+//            extraStartupParams.add("forceMongo")
+//        }
+//        def env = getEnv()
+//        switch (env) {
+//            case "all":
+//                if (!file(authEnv).exists() || !file(deliveryEnv).exists()) {
+//                    throw new InvalidUserDataException("Neither enviroment ('authoring'/'delivery') are deployed. Please run deploy before 'stop'.")
+//                }
+//                stopAuth(commandLinePrefix, shutDownFile, extraStartupParams).execute()
+//                stopDelivery(commandLinePrefix, shutDownFile).execute()
+//            case "authoring":
+//                if (!file(authEnv).exists()) {
+//                    throw new InvalidUserDataException("The 'authoring' enviroment is not deployed. Please run 'deploy -Penv=authoring' before 'stop'.")
+//                }
+//                stopAuth(commandLinePrefix, shutDownFile, extraStartupParams).execute()
+//                break
+//            case "delivery":
+//                if (!file(deliveryEnv).exists()) {
+//                    throw new InvalidUserDataException("The 'delivery' enviroment is not deployed. Please run 'deploy -Penv=delivery' before 'stop'.")
+//                }
+//                stopDelivery(commandLinePrefix, shutDownFile, extraStartupParams).execute()
+//                break
+//            default:
+//                throw new InvalidUserDataException("'${env}' is not a valid environment, please use 'authoring' or 'delivery'.")
+//        }
+//    }
+//}
+//
+//task("clean") {
+//    description "Clean Crafter CMS stack"
+//
+//    doFirst {
+//        def module = getModule();
+//    }
+//
+//    doLast {
+//        if (module.equals("all")) {
+//            VALID_MODULES.each {
+//                if (!(it.equalsIgnoreCase("studio-ui") || (it.equalsIgnoreCase("test-suite")))) {
+//                    // Not a pom project ignore
+//                    cleanModule(commandLinePrefix, it).execute()
+//                }
+//            }
+//        } else if (VALID_MODULES.contains(module)) {
+//            if (!(module.equalsIgnoreCase("studio-ui") || (module.equalsIgnoreCase("test-suite")))) {
+//                // Not a pom project ignore
+//                cleanModule(commandLinePrefix, module).execute()
+//            }
+//        } else {
+//            throw new InvalidUserDataException("${module} is not a valid module, please use one of ${VALID_MODULES}")
+//        }
+//    }
+//}
+//
+//task("build") {
+//    description "Builds Crafter CMS"
+//
+//    doFirst {
+//        def module = getModule();
+//    }
+//
+//    doLast {
+//        def toBuildModules = VALID_MODULES
+//        toBuildModules.remove("studio-ui")
+//        toBuildModules.remove("test-suite")
+//        if (!includeSocial) {
+//            toBuildModules.remove("social")
+//        }
+//        if (module.equals("all")) {
+//            toBuildModules.each {
+//                buildModule(commandLinePrefix, it).execute()
+//            }
+//        } else if (toBuildModules.contains(module)) {
+//            buildModule(commandLinePrefix, module).execute()
+//
+//        } else {
+//            throw new InvalidUserDataException("${module} is not a valid module, please use one of ${VALID_MODULES}")
+//        }
+//    }
+//}
+//
+//task("test") {
+//    description "Builds and run tests"
+//    def repoFolder = file("${authEnv}/data/repos/sites")
+//    doFirst {
+//        def driverPath = ""
+//        switch (browserToTest.toString().toLowerCase()) {
+//            case "chrome":
+//                downloadChromeDriver.execute()
+//                if (SystemUtils.IS_OS_WINDOWS) {
+//                    driverPath = file("./src/test-suite/bin/${browserToTest}-${testingPlatform}/chromedriver.exe")
+//                } else {
+//                    driverPath = file("./src/test-suite/bin/${browserToTest}-${testingPlatform}/chromedriver")
+//                }
+//                break;
+//            case "edge":
+//                downloadEdgeDriver.execute();
+//                driverPath = file("./src/test-suite/bin/${browserToTest}/MicrosoftWebDriver.exe")
+//                break
+//            default:
+//                driverPath = askForPath();
+//        }
+//        if (!file("./src/test-suite/test-properties.properties").exists()) {
+//            def properties = []
+//            properties.add("webBrowser=${browserToTest}")
+//            properties.add("baseUrl=http://localhost:8080/studio/#/login")
+//            properties.add("${browserToTest}.driver.path=${StringEscapeUtils.escapeJava(file(driverPath).absolutePath)}")
+//            Files.write(Paths.get("./src/test-suite/test-properties.properties"), properties, StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
+//        }
+//
+//        // Exists, is a folder and has sites
+//        if (repoFolder.exists() && repoFolder.isDirectory() && (repoFolder.listFiles().length > 0)) {
+//            def dataFolderSuffix = "-${new Date().format("YYYYMMdd")}-${UUID.randomUUID().toString()}"
+//
+//            logger.lifecycle("About to begin automatic testing suite")
+//            logger.lifecycle("Current Data folder will be move to data_${dataFolderSuffix}")
+//            logger.lifecycle("It will move it back when done ")
+//            sleep(5 * 1000)
+//            repoFolder.parentFile.parentFile.renameTo(repoFolder.parentFile.parentFile.absolutePath + dataFolderSuffix)
+//            repoFolder.parentFile.parentFile.mkdir()
+//            Files.write(Paths.get(repoFolder.parentFile.parentFile.absolutePath, "_btbk.txt"), [dataFolderSuffix], StandardOpenOption.CREATE, StandardOpenOption.TRUNCATE_EXISTING)
+//        }
+//
+//    }
+//
+//    doLast {
+//        startAuth(commandLinePrefix, startUpFile)
+//        try {
+//            logger.lifecycle("Wating for Authoring to finish startup.")
+//            sleep(30 * 1000)
+//            buildModule(commandLinePrefix,
+//                    "test-suite", "./src/",
+//                    ["-Dfile=" + testingSuites],
+//                    true)
+//        } catch (GradleException ex) { // no nothing
+//        } finally {
+//            stopAuth(commandLinePrefix, shutDownFile)
+//            def folderSuffixCacheFile = Paths.get(repoFolder.parentFile.parentFile.absolutePath, "_btbk.txt").toFile()
+//            if (folderSuffixCacheFile.exists()) {
+//                logger.lifecycle("Moving back pre-test data")
+//                logger.lifecycle("Test data was backup in the folder ${folderSuffixCacheFile.toString()}")
+//                logger.lifecycle("This folder can be safely remove if needed.")
+//                def dataFolderSufix = Files.readAllLines(folderSuffixCacheFile.toPath(), Charset.forName("UTF-8")).get(0)
+//                def backupedFolder = file(repoFolder.parentFile.parentFile.absolutePath + dataFolderSufix)
+//                if (backupedFolder.exists()) {
+//                    repoFolder.parentFile.parentFile.renameTo(repoFolder.parentFile.parentFile.absolutePath +
+//                            "$dataFolderSufix-td")
+//                    backupedFolder.renameTo(Paths.get(backupedFolder.parentFile.absolutePath, "data").toString())
+//                }
+//            }
+//        }
+//    }
+//}
+//
+//task("deploy") {
+//    description "Setup the Crafter CMS environment/s"
+//
+//    doLast {
+//        def module = getModule()
+//        def env = getEnv()
+//        switch (env) {
+//            case "all":
+//                checkEnvWD(authEnv, "authoring")
+//                checkEnvWD(deliveryEnv, "delivery")
+//                break
+//            case "authoring":
+//                checkEnvWD(authEnv, env)
+//                break
+//            case "delivery":
+//                checkEnvWD(deliveryEnv, env)
+//                break
+//            default:
+//                throw new InvalidUserDataException("'${env}' is not a valid environment, please use 'authoring' or 'delivery'.")
+//        }
+//
+//
+//
+//        if (module.equals("all")) {
+//            VALID_DEPLOYABLE_MODULES.keySet().each {
+//                if (isAllEnvs()) {
+//                    deployModule(commandLinePrefix, it, "authoring").execute()
+//                    deployModule(commandLinePrefix, it, "delivery").execute()
+//                } else {
+//                    deployModule(commandLinePrefix, it, env).execute()
+//                }
+//                if (!keepBin) {
+//                    file(VALID_DEPLOYABLE_MODULES[it]).delete()
+//                }
+//            }
+//        } else if (VALID_DEPLOYABLE_MODULES.containsKey(module)) {
+//            if (isAllEnvs()) {
+//                deployModule(commandLinePrefix, module, "authoring").execute()
+//                deployModule(commandLinePrefix, module, "delivery").execute()
+//            } else {
+//                deployModule(commandLinePrefix, module, env).execute()
+//            }
+//            if (!keepBin) {
+//                file(VALID_DEPLOYABLE_MODULES[module]).delete()
+//            }
+//        } else {
+//            throw new InvalidUserDataException("${module} is not a valid module, please use one of ${VALID_DEPLOYABLE_MODULES.keySet()}")
+//        }
+//        utils.execute()
+//    }
+//}
+//
+//task("bundle") {
+//    description "Builds a deployable and distributable bundle of Crafter CMS"
+//
+//    doLast {
+//        def env = getEnv()
+//        switch (env) {
+//            case "all":
+//                pack(authEnv, "authoring")
+//                pack(deliveryEnv, "delivery")
+//                break
+//            case "authoring":
+//                pack(authEnv, "authoring")
+//                break
+//            case "delivery":
+//                pack(deliveryEnv, "delivery")
+//                break
+//            default:
+//                throw new InvalidUserDataException("'${env}' is not a valid environment, please use 'authoring' or 'delivery'.")
+//        }
+//    }
+//}
+
+
+def cleanModule(commandLinePrefix, module) {
+    def ctask = tasks.findByPath("clean${module}")
+    if (ctask != null) {
+        return ctask
+    } else {
+        return tasks.create("clean${module}") {
+            executeProcess(commandLinePrefix + commandLinePrefix + ["mvn", "clean"], "./src/${module}".toString())
+        }
+    }
+}
+
+def updateModule(commandLinePrefix, module) {
+    def btask = tasks.findByPath("update${module}")
+    if (btask != null) {
+        return btask
+    } else {
+        return tasks.create("update${module}") {
+            if (!file("./src/${module}").exists()) {
+                throw new InvalidUserDataException("Module ${module} is not initialized. Please use 'update' to initialize it.")
+            } else {
+                def arry = commandLinePrefix + ["git", "pull", gitRepo, gitSourceBranch]
+                executeProcess(arry, "./src/${module}".toString())
+            }
+        }
+    }
+}
+
+def cloneModule(commandLinePrefix, module) {
+    def btask = tasks.findByPath("clone${module}")
+    if (btask != null) {
+        return btask
+    } else {
+        return tasks.create("clone${module}") {
+            def finalUrl = "${gitURLTemplate}${module}.git".toString()
+            def path = "src/${module}".toString()
+            def gitCloneCmd = ["git", "clone"]
+            if (shallowClone) {
+                gitCloneCmd.add("--depth")
+                gitCloneCmd.add("1")
+            }
+            def arry = commandLinePrefix + gitCloneCmd + ["-b", gitSourceBranch, finalUrl, path]
+            if (file(path).exists()) {
+                logger.lifecycle("Module ${module} has already been initialized, please use " +
+                        "'update' to update it.")
+            } else {
+                logger.lifecycle "Cloning: ${module}, branch: ${gitSourceBranch}, url: ${finalUrl}"
+                executeProcess(arry, ".")
+            }
+        }
+    }
+}
+
+//TODO: all of this can be just on function with 4 params.
+def startAuth(commandLinePrefix, startUpFile, params = []) {
+    def btask = tasks.findByPath("startAuth")
+    if (btask != null) {
+        return btask
+    } else {
+        tasks.create("startAuth") {
+            executeProcess(commandLinePrefix + [startUpFile] + params, "$authEnv/bin", true)
+        }
+    }
+}
+
+def startDelivery(commandLinePrefix, startUpFile, params = []) {
+    def btask = tasks.findByPath("startDelivery")
+    if (btask != null) {
+        return btask
+    } else {
+        tasks.create("startDelivery") {
+            executeProcess(commandLinePrefix + [startUpFile] + params, "$deliveryEnv/bin", true)
+        }
+    }
+}
+
+def stopAuth(commandLinePrefix, shutDownFile, params = []) {
+    def btask = tasks.findByPath("stopAuth")
+    if (btask != null) {
+        return btask
+    } else {
+        tasks.create("stopAuth") {
+            executeProcess(commandLinePrefix + [shutDownFile] + params, "$authEnv/bin", true)
+        }
+    }
+}
+
+def stopDelivery(commandLinePrefix, shutDownFile, params = []) {
+    def btask = tasks.findByPath("stopDelivery")
+    if (btask != null) {
+        return btask
+    } else {
+        tasks.create("stopDelivery") {
+            executeProcess(commandLinePrefix + [shutDownFile] + params, "$deliveryEnv/bin", true)
+        }
+    }
+}
+
+
+
+def buildModule(commandLinePrefix, module, path = "./src/", commandLinePost = [], forceTest = false) {
+    def btask = tasks.findByPath("build${module}")
+    def actualCommandLinePost = [];
+    actualCommandLinePost.addAll(commandLinePost)
+    if (!testArtifacts && !forceTest) { //ForceTest is needed to make test-suite run since, well they are tests
+        actualCommandLinePost.add("-Dmaven.test.skip=true")
+        // Ignore integration test to avoid starting mongo and jetty for nothing
+        if (module.equalsIgnoreCase("search")) {
+            actualCommandLinePost.add("-pl")
+            actualCommandLinePost.add("!crafter-search-itest")
+        } else if (module.equalsIgnoreCase("profile")) {
+            actualCommandLinePost.add("-pl")
+            if (!includeProfile) {
+                actualCommandLinePost.add("!admin-console,!integration-tests,!server")
+            } else {
+                actualCommandLinePost.add("!integration-tests")
+            }
+        }
+    }
+
+    if (btask != null) {
+        return btask
+    } else {
+        return tasks.create("build${module}") {
+            if (module.equalsIgnoreCase("studio") && !studioUIFromRepo) {
+                actualCommandLinePost.add("-Dstudio.ui.path=../studio-ui/".toString())
+                actualCommandLinePost.add("-Dexec.skip=true")
+            }
+            // Always do a Clean build, never trust caches or FS.
+            def array = commandLinePrefix + commandLinePrefix + ["mvn", "clean", "install"] + actualCommandLinePost
+            executeProcess(array, "${path}${module}".toString())
+        }
+    }
+}
+
+def deployBinary(deployable, env) {
+    if (deployable.exists()) {
+        def path = env.equals("authoring") ? authEnv : deliveryEnv
+        path += deployable.absolutePath.endsWith(".jar") ? "bin/crafter-deployer/" : "bin/apache-tomcat/webapps/"
+        path += deployable.name
+        delete {
+            delete path
+            delete path.take(path.lastIndexOf('.'))
+        }
+        copy {
+            from deployable.absolutePath
+            into path.take(path.lastIndexOf('/'))
+        }
+    } else {
+        logger.lifecycle "WARN: You haven't built ${module} module"
+    }
+}
+
+def deployModule(commandLinePrefix, module, env) {
+    def dtask = tasks.findByPath("deploy${module}${env}")
+    if (dtask != null) {
+        return dtask
+    } else {
+        return tasks.create("deploy${module}${env}") {
+            logger.lifecycle "Deploy ${module} to ${env}"
+            if (module.equals("studio") && env.equals("delivery")) {
+                logger.lifecycle "Ignoring module 'studio' can not be deployed in environment 'delivery'"
+            } else if ((module.equals("profile") && !includeProfile) || (module.equals("social") && !includeSocial)) {
+                logger.lifecycle "Ignoring module '$module' not enabled for environment '$env'"
+            } else {
+                def deployable = file(VALID_DEPLOYABLE_MODULES[module])
+                deployBinary(deployable, env)
+                if (module.equalsIgnoreCase("profile")) {
+                    deployBinary(file("./src/profile/admin-console/target/crafter-profile-admin.war"), env)
+                } else if (module.equalsIgnoreCase("social")) {
+                    deployBinary(file("./src/social/admin/target/crafter-social-admin.war"), env)
+                }
+            }
+        }
+    }
+}
+
+def checkEnvWD(path, env) {
+    def ddir = file(path)
+    if (!ddir.exists() || forceDeploy) {
+        ddir.mkdir()
+        def deployerDir = file("${path}/bin/crafter-deployer")
+        deployerDir.mkdir()
+    }
+    downloadTomcat.execute()
+    downloadSolr.execute()
+    if (env.equals("authoring")) {
+        authoringEnvironment.execute()
+    } else if (env.equals("delivery")) {
+        deliveryEnvironment.execute()
+    }
+}
+
+def pack(environmentPath, envName) {
+    def dtask = tasks.findByPath("tar${envName}")
+    if (dtask != null) {
+        return dtask
+    } else {
+        def zipTask = tasks.findByPath("zip${envName}")
+        if (zipTask != null) {
+            zipTask.execute()
+        } else {
+            tasks.create("zip${envName}", Zip.class) {
+                from(environmentPath) {
+                    into("crafter")
+                }
+                archiveName "crafter-cms-${envName}.zip"
+                fileMode null
+                dirMode null
+                includeEmptyDirs true
+                metadataCharset "UTF-8"
+                caseSensitive false
+                destinationDir(file("bundles/"))
+            }.execute()
+        }
+
+        def tarTask = tasks.findByPath("tar${envName}")
+        if (tarTask != null) {
+            tarTask.execute()
+        } else {
+            tasks.create("tar${envName}", Tar.class) {
+                from(environmentPath) {
+                    into("crafter")
+                }
+                archiveName "crafter-cms-${envName}.tar.gz"
+                fileMode null
+                dirMode null
+                includeEmptyDirs true
+                caseSensitive false
+                compression = Compression.GZIP
+                destinationDir(file("bundles/"))
+            }.execute()
+        }
+    }
+}
+
+def executeProcess(command, workingDir, printOutputUntilFinish = false) {
+    ProcessBuilder pb = new ProcessBuilder(command)
+    def processOutput = File.createTempFile("process", "out")
+    pb.directory(new File(workingDir))
+    pb.redirectOutput(processOutput)
+    Process proc = pb.start();
+    if (!silentBuild){
+        watchProcessOutput(proc, processOutput)
+    }
+    proc.waitFor()
+    if (proc.exitValue() != 0) {
+        throw new GradleException("${command} @ ${workingDir} return a  non-zero value (${proc.exitValue()})")
+    }
+}
+
+// Poor's man tail (but get's the job done
+def watchProcessOutput(process, processOutputFile) {
+    Thread.start {
+
+        def reader = null
+        if (System.getProperty('os.name').toLowerCase().contains('windows')) {
+            reader = Files.newBufferedReader(Paths.get(processOutputFile.path), Charset.forName("ISO-8859-1"))
+        } else {
+            reader = Files.newBufferedReader(Paths.get(processOutputFile.path), Charset.forName("UTF-8"))
+        }
+        while (process.alive) {
+            def line = null
+            while ((line = reader.readLine()) != null) {
+                logger.lifecycle line
+            }
+        }
+        processOutputFile.delete()
+    }
+}
+
+def askForPath() {
+    def console = System.console();
+    def inputPath = console.readLine("> Please enter path for selemiun driver of ${browserToTest} ")
+    if (!file(inputPath).exists()) {
+        console.logger.lifecycle("${inputPath} does not exist, please enter a new valid path");
+        askForPath();
+    }
+    return inputPath
+}
